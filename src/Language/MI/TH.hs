@@ -46,15 +46,15 @@ pFunc = do
     funcdef <- many anyToken
     return dic
 
-appendUnderbar :: String -> String
-appendUnderbar x = x ++ "_"
+addUnderbar :: String -> String
+addUnderbar x = x ++ "_"
 
 sub :: String -> Parser String
 sub x = do
     s <- oneOf ">(,|-` ="
     string x
     t <- oneOf "),|` "
-    return $ s : (appendUnderbar(x) ++ [t])
+    return $ s : (addUnderbar(x) ++ [t])
 
 replaceMatchAll s line = 
   case parse replaceAllParser "" line of
@@ -115,31 +115,39 @@ miFunc dic funcdef = do
                         case lookup dic table of
                           Nothing -> return []
                           Just v -> return v
-    fn <- return $ nameBase $ funcname $ tof $ toFuncD funcdef
-    --runIO $ print fn
-    changed <- return $ trans funcdef (fn:funcs)
-    --runIO $ print changed
-    funcds <- return $ tof $ toFuncD changed
-    --runIO $ print funcds
-    t <- return $ mkExplicitFunc (namechange (mkName fn) funcds) funcs
-    --runIO $ print t
-    imp <- return $ toFuncD $ mkimpfunc fn dic funcds
-    --runIO $ print imp
-    return $ (mkExplicitFunc (namechange (mkName fn) funcds) funcs) ++ imp
+    orgDef <- return $ extractDef $ toFuncD funcdef
+    fn <- return $ nameBase $ getFuncName orgDef
+    newDef <- return $ trans funcdef $ fn:funcs
+    funcds <- return $ filter (not . isSigD) $ extractDef $ toFuncD newDef
+    body <- return $ toFuncD $ mkDefFunc fn dic funcds
+    defaultFunc <- return $ case find isSigD orgDef of
+                              Just s -> s : body
+                              Nothing -> body
+    return $ (mkExplicitFunc (changeName (mkName fn) funcds) funcs) ++ defaultFunc
     where
-      flapflap = (InfixE (Just (VarE 'flip)) (VarE $ mkName ".") (Just (InfixE (Just (VarE 'flip)) (VarE $ mkName ".") Nothing)))
-      valFunc dic ((FunD name _):fs) = ValD (VarP $ mkName $ nameBase name) (NormalB (AppE (AppE flapflap (VarE $ mkName $ (nameBase name) ++ "'")) (VarE $ mkName dic))) []
-      mkExplicitFunc ((FunD name c):fs) dic = (FunD (mkName $ (nameBase name) ++ "'") (clausepat dic (nameBase name) c)):fs
+      isSigD a = case a of
+                   (SigD _ _ ) -> True
+                   otherwise -> False
       toFuncD s = case parseDecs s of
                    Left err -> error err
                    Right x -> x
       trans = foldr (\d a -> replaceMatchAll (sub d) a)
-      tof ((ValD p b d):xs) = d
-      funcname ((FunD name c):xs) = name
-      clausepat dic fn = foldr (\(Clause p b d) a -> (Clause ([VarP $ mkName "dic"]++p) b (d++(dicapp dic)++(recursivefunc fn))) : a) []
+      extractDef ((ValD _ _ d):_) = d
+      
+      getFuncName ((FunD name _):_) = name
+      getFuncName (_:xs) = getFuncName xs
+
+      addDash s = s ++ "'"
+
+      mkExplicitFunc ((FunD name c):fs) dic = (FunD (mkName $ addDash (nameBase name)) (clausepat dic (nameBase name) c)):fs
+
+      clausepat dic fn = foldr (\(Clause p b d) a -> (Clause ([VarP $ mkName "dic"] ++ p) b (d ++ (dicapp dic) ++ (recursiveFunc fn))) : a) []
       dicapp [] = []
-      dicapp (x:xs) = (ValD (VarP $ mkName $ x++"_") (NormalB (AppE (VarE $ mkName x) (VarE $ mkName "dic"))) []) : (dicapp xs)
-      recursivefunc fn = [(ValD (VarP $ mkName $ fn++"_") (NormalB (AppE (VarE $ mkName $ fn++"'") (VarE $ mkName "dic"))) [])]
-      namechange fn = foldr (\(FunD name c) a -> (FunD fn c) : a) []
-      ttt ((FunD name ((Clause p b d):cs)):fs) = foldr (\x y -> (x++" ")++y) [] (take (length p) $ splitOn "," $ intersperse ',' ['a'..'z'])
-      mkimpfunc fn d a = fn++" "++(ttt a)++" = "++fn++"'"++" "++d++" "++(ttt a)
+      dicapp (x:xs) = (ValD (VarP $ mkName $ addUnderbar x) (NormalB (AppE (VarE $ mkName x) (VarE $ mkName "dic"))) []) : (dicapp xs)
+      recursiveFunc fn = [(ValD (VarP $ mkName $ addUnderbar fn) (NormalB (AppE (VarE $ mkName $ addDash fn) (VarE $ mkName "dic"))) [])]
+
+      changeName fn = foldr (\(FunD name c) a -> (FunD fn c) : a) []
+      mkArgs ((FunD _ ((Clause args _ _):_)):_) = foldr (\x y -> x ++ " " ++ y) [] (take (length args) $ splitOn "," $ intersperse ',' ['a'..'z'])
+      mkDefFunc fn d a = foldr (++) "" [fn, " ", args, " = ", addDash fn, " ", d, " ", args]
+                        where
+                          args = mkArgs a

@@ -23,7 +23,7 @@ mi = QuasiQuoter
     , quoteDec  = multipleInstance
     }
 
-pMultipleInstance :: Parser (String, String, String)
+pMultipleInstance :: Parser (String, String, String, String)
 pMultipleInstance = do
     spaces >> string "instance"
     dic <- (many1 space *> pDicName)
@@ -32,7 +32,7 @@ pMultipleInstance = do
     datatype <- (many1 space *> pDataTypeName)
     (many1 space) >> string "where"
     funcdef <- (many1 space *> pFuncDef)
-    return $ (,,) dic typeclass funcdef
+    return $ (,,,) dic typeclass datatype funcdef
 
 pDicName = (:) <$> lower <*> many1 alphaNum
 pTypeClassName = (:) <$> upper <*> many1 alphaNum
@@ -80,7 +80,7 @@ multipleInstance input = do
                                  ((ClassD cxt' name tv _ funcSig):rest) -> miClass cxt' name tv funcSig
                                  _ -> error "unexpected"
                   (Left _) -> case parse pMultipleInstance "Instance Parser" input of
-                                (Right (dic, typeclass, funcdef)) -> miInstance dic typeclass funcdef
+                                (Right (dic, typeclass, datatype, funcdef)) -> miInstance dic typeclass datatype funcdef
                                 (Left _) -> error "unexpected"
                       
 miClass c name tv funcSig = do
@@ -92,12 +92,13 @@ miClass c name tv funcSig = do
              where
                funcDefSig = foldr (\(SigD n t) a -> (n, NotStrict, t) : a) []
 
-miInstance dic typeclass funcdef = do
+miInstance dic typeclass datatype funcdef = do
     runIO $ do table <- readIORef dicTable
                writeIORef dicTable (table ++ [(dic, getFuncName $ toFuncD input)])
-    return $ [ValD (VarP $ mkName dic)
-             (NormalB (RecConE (mkName typeclass) (body src)))
-             (subfunc src)
+    return $ [SigD (mkName dic) (AppT (ConT $ mkName typeclass) (ConT $ mkName datatype))
+             ,ValD (VarP $ mkName dic)
+              (NormalB (RecConE (mkName typeclass) (body src)))
+              (subfunc src)
              ]
              where
                input = splitOn "\n" funcdef
